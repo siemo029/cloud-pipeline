@@ -42,6 +42,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.internal.util.reflection.Whitebox;
@@ -95,7 +96,10 @@ public class ResourceMonitoringManagerTest {
     private static final Map<String, String> PRESSURE_TAGS =
         Collections.singletonMap(UTILIZATION_LEVEL_HIGH, TRUE_VALUE_STRING);
 
-    private ResourceMonitoringManager resourceMonitoringManager;
+    @InjectMocks
+    private ResourceMonitoringManager resourceMonitoringManager = new ResourceMonitoringManager();
+    private ResourceMonitoringManager.ResourceMonitoringManagerCore core =
+        resourceMonitoringManager. new ResourceMonitoringManagerCore();
 
     @Mock
     private PreferenceManager preferenceManager;
@@ -135,9 +139,14 @@ public class ResourceMonitoringManagerTest {
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
 
-        resourceMonitoringManager = new ResourceMonitoringManager(pipelineRunManager, preferenceManager,
-                                                                  notificationManager, instanceOfferManager,
-                                                                  monitoringESDao, taskScheduler, messageHelper);
+        Whitebox.setInternalState(core, "pipelineRunManager", pipelineRunManager);
+        Whitebox.setInternalState(core, "notificationManager", notificationManager);
+        Whitebox.setInternalState(core, "monitoringDao", monitoringESDao);
+        Whitebox.setInternalState(core, "messageHelper", messageHelper);
+        Whitebox.setInternalState(resourceMonitoringManager, "core", core);
+        Whitebox.setInternalState(resourceMonitoringManager, "instanceOfferManager", instanceOfferManager);
+        Whitebox.setInternalState(resourceMonitoringManager, "preferenceManager", preferenceManager);
+        Whitebox.setInternalState(resourceMonitoringManager, "scheduler", taskScheduler);
         Whitebox.setInternalState(resourceMonitoringManager, "authManager", authManager);
 
         when(preferenceManager.getObservablePreference(SystemPreferences.SYSTEM_RESOURCE_MONITORING_PERIOD))

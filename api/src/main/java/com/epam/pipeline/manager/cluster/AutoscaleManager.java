@@ -39,6 +39,8 @@ import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
+import lombok.AllArgsConstructor;
+import net.javacrumbs.shedlock.core.SchedulerLock;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.slf4j.Logger;
@@ -46,6 +48,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
@@ -70,7 +73,24 @@ public class AutoscaleManager extends AbstractSchedulingManager {
     public static final int NODEUP_SPOT_FAILED_EXIT_CODE = 5;
     public static final int NODEUP_LIMIT_EXCEEDED_EXIT_CODE = 6;
 
-    private String kubeNamespace;
+    private static final Logger LOGGER = LoggerFactory.getLogger(AutoscaleManager.class);
+
+    @Autowired
+    private AutoscaleManagerCore core;
+
+    @PostConstruct
+    public void init() {
+        if (preferenceManager.getPreference(SystemPreferences.CLUSTER_ENABLE_AUTOSCALING)) {
+            scheduleFixedDelay(core::runAutoscaling, SystemPreferences.CLUSTER_AUTOSCALE_RATE, "Autoscaling job");
+        }
+    }
+
+    public void runAutoscaling() {
+        core.runAutoscaling();
+    }
+
+    @Component
+    class AutoscaleManagerCore {
 
     private final PipelineRunManager pipelineRunManager;
     private final ParallelExecutorService executorService;
@@ -86,34 +106,29 @@ public class AutoscaleManager extends AbstractSchedulingManager {
 
     private static final String FREE_NODE_PREFIX = "f";
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(AutoscaleManager.class);
+    @Value("${kube.namespace}")
+    private String kubeNamespace;
 
     @Autowired
-    public AutoscaleManager(PipelineRunManager pipelineRunManager,
-                            ParallelExecutorService executorService,
-                            AutoscalerService autoscalerService,
-                            NodesManager nodesManager,
-                            KubernetesManager kubernetesManager,
-                            PreferenceManager preferenceManager,
-                            @Value("${kube.namespace}") String kubeNamespace,
-                            final CloudFacade cloudFacade) {
+    public AutoscaleManagerCore(final PipelineRunManager pipelineRunManager,
+                                final ParallelExecutorService executorService,
+                                final AutoscalerService autoscalerService,
+                                final NodesManager nodesManager,
+                                final KubernetesManager kubernetesManager,
+                                final PreferenceManager preferenceManager,
+                                final CloudFacade cloudFacade) {
         this.pipelineRunManager = pipelineRunManager;
         this.executorService = executorService;
         this.autoscalerService = autoscalerService;
         this.nodesManager = nodesManager;
         this.kubernetesManager = kubernetesManager;
         this.preferenceManager = preferenceManager;
-        this.kubeNamespace = kubeNamespace;
         this.cloudFacade = cloudFacade;
     }
 
-    @PostConstruct
-    public void init() {
-        if (preferenceManager.getPreference(SystemPreferences.CLUSTER_ENABLE_AUTOSCALING)) {
-            scheduleFixedDelay(this::runAutoscaling, SystemPreferences.CLUSTER_AUTOSCALE_RATE, "Autoscaling job");
-        }
-    }
-
+    @SchedulerLock(name = "AutoscaleManager_runAutoscaling",
+        lockAtLeastForString = "PT39S",
+        lockAtMostForString = "PT39S")
     public void runAutoscaling() {
         LOGGER.debug("Starting autoscaling job.");
         Config config = new Config();
@@ -625,6 +640,7 @@ public class AutoscaleManager extends AbstractSchedulingManager {
             LOGGER.debug(e.getMessage(), e);
         }
 
+    }
     }
 
 }
