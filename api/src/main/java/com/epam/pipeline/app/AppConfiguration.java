@@ -17,6 +17,9 @@
 package com.epam.pipeline.app;
 
 import com.epam.pipeline.common.MessageHelper;
+import net.javacrumbs.shedlock.core.LockProvider;
+import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
+import net.javacrumbs.shedlock.spring.annotation.EnableSchedulerLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
@@ -34,6 +37,7 @@ import org.springframework.web.filter.CommonsRequestLoggingFilter;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import javax.sql.DataSource;
 
 @Configuration
 @EnableScheduling
@@ -43,6 +47,7 @@ import java.util.concurrent.Executors;
         "com.epam.pipeline.security",
         "com.epam.pipeline.aspect",
         "com.epam.pipeline.event"})
+@EnableSchedulerLock(interceptMode = EnableSchedulerLock.InterceptMode.PROXY_METHOD, defaultLockAtMostFor = "PT30S")
 public class AppConfiguration implements SchedulingConfigurer {
 
     private static final int MAX_LOG_PAYLOAD_LENGTH = 1000;
@@ -100,6 +105,11 @@ public class AppConfiguration implements SchedulingConfigurer {
     @Bean
     public Executor dataStoragePathExecutor() {
         return getSingleThreadExecutor("PathExecutor");
+    }
+
+    @Bean(name = "lockProvider")
+    public LockProvider lockProvider(DataSource dataSource) {
+        return new JdbcTemplateLockProvider(dataSource);
     }
 
     private Executor getThreadPoolTaskExecutor(String name) {
