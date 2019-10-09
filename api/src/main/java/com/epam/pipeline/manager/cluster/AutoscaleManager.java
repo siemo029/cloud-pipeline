@@ -39,7 +39,6 @@ import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
-import lombok.AllArgsConstructor;
 import net.javacrumbs.shedlock.core.SchedulerLock;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.math.NumberUtils;
@@ -75,12 +74,17 @@ public class AutoscaleManager extends AbstractSchedulingManager {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AutoscaleManager.class);
 
+    private final AutoscaleManagerCore core;
+
     @Autowired
-    private AutoscaleManagerCore core;
+    public AutoscaleManager(final AutoscaleManagerCore core) {
+        this.core = core;
+    }
 
     @PostConstruct
     public void init() {
         if (preferenceManager.getPreference(SystemPreferences.CLUSTER_ENABLE_AUTOSCALING)) {
+            core.setPreferenceManager(preferenceManager);
             scheduleFixedDelay(core::runAutoscaling, SystemPreferences.CLUSTER_AUTOSCALE_RATE, "Autoscaling job");
         }
     }
@@ -90,15 +94,16 @@ public class AutoscaleManager extends AbstractSchedulingManager {
     }
 
     @Component
-    class AutoscaleManagerCore {
+    static class AutoscaleManagerCore {
 
     private final PipelineRunManager pipelineRunManager;
     private final ParallelExecutorService executorService;
     private final AutoscalerService autoscalerService;
     private final NodesManager nodesManager;
     private final KubernetesManager kubernetesManager;
-    private final PreferenceManager preferenceManager;
     private final CloudFacade cloudFacade;
+    private PreferenceManager preferenceManager;
+    private String kubeNamespace;
 
     private final Set<Long> nodeUpTaskInProgress = ConcurrentHashMap.newKeySet();
     private final Map<Long, Integer> nodeUpAttempts = new ConcurrentHashMap<>();
@@ -106,29 +111,29 @@ public class AutoscaleManager extends AbstractSchedulingManager {
 
     private static final String FREE_NODE_PREFIX = "f";
 
-    @Value("${kube.namespace}")
-    private String kubeNamespace;
-
     @Autowired
     public AutoscaleManagerCore(final PipelineRunManager pipelineRunManager,
                                 final ParallelExecutorService executorService,
                                 final AutoscalerService autoscalerService,
                                 final NodesManager nodesManager,
                                 final KubernetesManager kubernetesManager,
-                                final PreferenceManager preferenceManager,
+                                @Value("${kube.namespace}") String kubeNamespace,
                                 final CloudFacade cloudFacade) {
         this.pipelineRunManager = pipelineRunManager;
         this.executorService = executorService;
         this.autoscalerService = autoscalerService;
         this.nodesManager = nodesManager;
         this.kubernetesManager = kubernetesManager;
-        this.preferenceManager = preferenceManager;
         this.cloudFacade = cloudFacade;
+        this.kubeNamespace = kubeNamespace;
+    }
+
+    private void setPreferenceManager(final PreferenceManager preferenceManager) {
+        this.preferenceManager = preferenceManager;
     }
 
     @SchedulerLock(name = "AutoscaleManager_runAutoscaling",
-        lockAtLeastForString = "PT39S",
-        lockAtMostForString = "PT39S")
+        lockAtLeastForString = "PT39S", lockAtMostForString = "PT40S")
     public void runAutoscaling() {
         LOGGER.debug("Starting autoscaling job.");
         Config config = new Config();

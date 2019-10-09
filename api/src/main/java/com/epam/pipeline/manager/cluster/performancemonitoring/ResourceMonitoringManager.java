@@ -33,7 +33,6 @@ import javax.annotation.PostConstruct;
 import com.epam.pipeline.entity.cluster.monitoring.ELKUsageMetric;
 import com.epam.pipeline.manager.preference.PreferenceManager;
 import com.epam.pipeline.manager.preference.SystemPreferences;
-import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.core.SchedulerLock;
 import org.apache.commons.lang3.tuple.ImmutablePair;
@@ -41,7 +40,6 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.math3.util.Precision;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -74,24 +72,23 @@ import io.reactivex.Observable;
 @Slf4j
 public class ResourceMonitoringManager extends AbstractSchedulingManager {
 
-    @Autowired
-    private InstanceOfferManager instanceOfferManager;
-    @Autowired
-    private PreferenceManager preferenceManager;
-    @Autowired
-    private TaskScheduler scheduler;
-    @Autowired
-    private ResourceMonitoringManagerCore core;
+    private final InstanceOfferManager instanceOfferManager;
+    private final ResourceMonitoringManagerCore core;
 
-    private Map<String, InstanceType> instanceTypeMap = new HashMap<>();
+    @Autowired
+    public ResourceMonitoringManager(final InstanceOfferManager instanceOfferManager,
+                                     final ResourceMonitoringManagerCore core) {
+        this.instanceOfferManager = instanceOfferManager;
+        this.core = core;
+    }
 
     @PostConstruct
     public void init() {
+        core.setPreferenceManager(preferenceManager);
         Observable<List<InstanceType>> instanceTypesObservable = instanceOfferManager.getAllInstanceTypesObservable();
-
-        instanceTypesObservable.subscribe(instanceTypes -> instanceTypeMap = instanceTypes.stream()
-                .collect(Collectors.toMap(InstanceType::getName, t -> t, (t1, t2) -> t1)));
-
+        instanceTypesObservable
+            .subscribe(instanceTypes -> core.setInstanceTypeMap(
+                instanceTypes.stream().collect(Collectors.toMap(InstanceType::getName, t -> t, (t1, t2) -> t1))));
         scheduleFixedDelaySecured(core::monitorResourceUsage, SystemPreferences.SYSTEM_RESOURCE_MONITORING_PERIOD,
                 "Resource Usage Monitoring");
     }
@@ -101,8 +98,7 @@ public class ResourceMonitoringManager extends AbstractSchedulingManager {
     }
 
     @Component
-    @NoArgsConstructor
-    class ResourceMonitoringManagerCore {
+    static class ResourceMonitoringManagerCore {
 
     private static final int MILLIS = 1000;
     private static final double PERCENT = 100.0;
@@ -111,20 +107,27 @@ public class ResourceMonitoringManager extends AbstractSchedulingManager {
     private static final String UTILIZATION_LEVEL_HIGH = "PRESSURE";
     private static final String TRUE_VALUE_STRING = "true";
 
-    private PipelineRunManager pipelineRunManager;
-    private NotificationManager notificationManager;
-    private MonitoringESDao monitoringDao;
-    private MessageHelper messageHelper;
+    private final PipelineRunManager pipelineRunManager;
+    private final NotificationManager notificationManager;
+    private final MonitoringESDao monitoringDao;
+    private final MessageHelper messageHelper;
+    private PreferenceManager preferenceManager;
+
+    private Map<String, InstanceType> instanceTypeMap = new HashMap<>();
 
     @Autowired
-    ResourceMonitoringManagerCore(PipelineRunManager pipelineRunManager,
-                                  NotificationManager notificationManager,
-                                  MonitoringESDao monitoringDao,
-                                  MessageHelper messageHelper) {
+    ResourceMonitoringManagerCore(final PipelineRunManager pipelineRunManager,
+                                  final NotificationManager notificationManager,
+                                  final MonitoringESDao monitoringDao,
+                                  final MessageHelper messageHelper) {
         this.pipelineRunManager = pipelineRunManager;
         this.messageHelper = messageHelper;
         this.notificationManager = notificationManager;
         this.monitoringDao = monitoringDao;
+    }
+
+    private void setPreferenceManager(final PreferenceManager preferenceManager) {
+        this.preferenceManager = preferenceManager;
     }
 
     @Scheduled(cron = "0 0 0 ? * *")
@@ -137,8 +140,7 @@ public class ResourceMonitoringManager extends AbstractSchedulingManager {
     }
 
     @SchedulerLock(name = "ResourceMonitoringManager_monitorResourceUsage",
-        lockAtLeastForString = "PT59S",
-        lockAtMostForString = "PT59S")
+        lockAtLeastForString = "PT59S", lockAtMostForString = "PT1M")
     public void monitorResourceUsage() {
         List<PipelineRun> runs = pipelineRunManager.loadRunningPipelineRuns();
         processIdleRuns(runs);
@@ -376,6 +378,10 @@ public class ResourceMonitoringManager extends AbstractSchedulingManager {
 
     private boolean isClusterRun(final PipelineRun run) {
         return run.getNodeCount() != null && run.getNodeCount() != 0 || run.getParentRunId() != null;
+    }
+
+    private void setInstanceTypeMap(final Map<String, InstanceType> instanceTypeMap) {
+        this.instanceTypeMap = instanceTypeMap;
     }
     }
 }
