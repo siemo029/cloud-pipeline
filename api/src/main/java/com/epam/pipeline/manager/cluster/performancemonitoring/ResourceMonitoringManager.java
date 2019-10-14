@@ -112,8 +112,7 @@ public class ResourceMonitoringManager extends AbstractSchedulingManager {
     private final MonitoringESDao monitoringDao;
     private final MessageHelper messageHelper;
     private PreferenceManager preferenceManager;
-
-    private Map<String, InstanceType> instanceTypeMap = new HashMap<>();
+    private Map<String, InstanceType> instanceTypeMap;
 
     @Autowired
     ResourceMonitoringManagerCore(final PipelineRunManager pipelineRunManager,
@@ -124,6 +123,7 @@ public class ResourceMonitoringManager extends AbstractSchedulingManager {
         this.messageHelper = messageHelper;
         this.notificationManager = notificationManager;
         this.monitoringDao = monitoringDao;
+        this.instanceTypeMap = new HashMap<>();
     }
 
     private void setPreferenceManager(final PreferenceManager preferenceManager) {
@@ -133,7 +133,7 @@ public class ResourceMonitoringManager extends AbstractSchedulingManager {
     @Scheduled(cron = "0 0 0 ? * *")
     @SchedulerLock(name = "ResourceMonitoringManager_removeOldIndices",
         lockAtLeastForString = "PT23H59M",
-        lockAtMostForString = "PT23H59M")
+        lockAtMostForString = "PT24H")
     public void removeOldIndices() {
         monitoringDao.deleteIndices(preferenceManager.getPreference(
             SystemPreferences.SYSTEM_RESOURCE_MONITORING_STATS_RETENTION_PERIOD));
