@@ -21,7 +21,7 @@ from pipeline import PipelineAPI, Logger as CloudPipelineLogger
 import subprocess
 import time
 import multiprocessing
-
+import re
 
 class ExecutionError(RuntimeError):
     pass
@@ -451,8 +451,8 @@ class GridEngineScaleUpHandler:
     _POLL_DELAY = 10
 
     def __init__(self, cmd_executor, pipe, grid_engine, host_storage, parent_run_id, default_hostfile, instance_disk,
-                 instance_type, instance_image, price_type, region_id, instance_cores, polling_timeout,
-                 polling_delay=_POLL_DELAY):
+                 instance_type, instance_image, price_type, region_id, cloud_provider, instance_cores, polling_timeout,
+                 polling_delay=_POLL_DELAY, instance_family=None):
         """
         Grid engine scale up implementation. It handles additional nodes launching and hosts configuration (/etc/hosts
         and self.default_hostfile).
@@ -483,9 +483,11 @@ class GridEngineScaleUpHandler:
         self.instance_image = instance_image
         self.price_type = price_type
         self.region_id = region_id
+        self.cloud_provider = cloud_provider
         self.instance_cores = instance_cores
         self.polling_timeout = polling_timeout
         self.polling_delay = polling_delay
+        self.instance_family = instance_family
 
     def scale_up(self):
         """
@@ -537,6 +539,12 @@ class GridEngineScaleUpHandler:
         run_id = int(self.executor.execute_to_lines(pipe_run_command)[0])
         Logger.info('Additional worker run id is %s.' % run_id)
         return run_id
+
+    def _get_allowed_instance(self):
+        is_spot = self._pipe_cli_price_type(self.price_type) == "on-demand"
+        allowed = self.pipe.get_allowed_instance_types(self.region_id, is_spot)["cluster.allowed.instance.types"]
+        return [instance for instance in allowed
+                if _instance_from_family(self.cloud_provider, instance["name"], self.instance_family)]
 
     def _pipe_cli_price_type(self, price_type):
         """
@@ -1010,6 +1018,21 @@ def _retrieve_preference(pipe, preference, default_value):
         return default_value
 
 
+def _get_family_from_type(cloud_provider, instance_type):
+    if cloud_provider == "AWS":
+        return instance_type.rsplit('.', 1)[0]
+    elif cloud_provider == "GCP":
+        return instance_type.rsplit('-', 2)[1] if "custom" not in instance_type else None
+    elif cloud_provider == "AZURE":
+        search = re.search("([a-zA-Z]+)\d+(.*)", instance_type.split('_', 1)[1].replace("_", ""))
+        return search.group(1) + search.group(2) if search else None
+    else:
+        return None
+
+def _instance_from_family(cloud_provider, instance_type, instance_family):
+    return _get_family_from_type(cloud_provider, instance_type) == instance_family
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Launches grid engine autoscaler long running process.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -1021,6 +1044,7 @@ if __name__ == '__main__':
                         help='Autoscaling polling interval in seconds.')
     args = parser.parse_args()
 
+    cloud_provider = os.environ['CLOUD_PROVIDER']
     pipeline_api = os.environ['API']
     master_run_id = os.environ['RUN_ID']
     default_hostfile = os.environ['DEFAULT_HOSTFILE']
@@ -1035,6 +1059,7 @@ if __name__ == '__main__':
         if 'CP_CAP_AUTOSCALE_WORKERS' in os.environ else 3
     log_verbose = os.environ['CP_CAP_AUTOSCALE_VERBOSE'].strip().lower() == "true" \
         if 'CP_CAP_AUTOSCALE_VERBOSE' in os.environ else False
+    autoscale_instance_family = os.getenv('CP_CAP_AUTOSCALE_HYBRID_FAMILY', _get_family_from_type(cloud_provider, instance_type))
 
     Logger.init(cmd=args.debug, log_file='/common/workdir/.autoscaler.log', task='GridEngineAutoscaling',
                 verbose=log_verbose)
@@ -1051,8 +1076,9 @@ if __name__ == '__main__':
                                                 host_storage=host_storage, parent_run_id=master_run_id,
                                                 default_hostfile=default_hostfile, instance_disk=instance_disk,
                                                 instance_type=instance_type, instance_image=instance_image,
-                                                price_type=price_type, region_id=region_id,
-                                                instance_cores=instance_cores, polling_timeout=scale_up_polling_timeout)
+                                                price_type=price_type, region_id=region_id, cloud_provider=cloud_provider,
+                                                instance_cores=instance_cores, polling_timeout=scale_up_polling_timeout,
+                                                instance_family=autoscale_instance_family)
     scale_down_handler = GridEngineScaleDownHandler(cmd_executor=cmd_executor, grid_engine=grid_engine,
                                                     default_hostfile=default_hostfile, instance_cores=instance_cores)
     worker_validator = GridEngineWorkerValidator(cmd_executor=cmd_executor, host_storage=host_storage,
