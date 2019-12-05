@@ -152,9 +152,9 @@ class GridEngineJob:
 
 class GridEngine:
     _MAIN_Q = os.getenv('CP_CAP_SGE_QUEUE_NAME', 'main.q')
-    _PARALLEL_ENVIRONMENT = os.getenv('CP_CAP_SGE_PE_NAME', 'local')
     _ALL_HOSTS = '@allhosts'
     _DELETE_HOST = 'qconf -de %s'
+    _SHOW_PARALLEL_ENVIRONMENTS = 'qconf -spl'
     _SHOW_PARALLEL_ENVIRONMENT_SLOTS = 'qconf -sp %s | grep "^slots" | awk \'{print $2}\''
     _REPLACE_PARALLEL_ENVIRONMENT_SLOTS = 'qconf -rattr pe slots %s %s'
     _SHOW_JOB_PARALLEL_ENVIRONMENT = 'qstat -j %s | grep "^parallel environment" | awk \'{print $3}\''
@@ -281,27 +281,34 @@ class GridEngine:
         """
         self.cmd_executor.execute(GridEngine._QMOD_ENABLE % (queue, host))
 
-    def increase_parallel_environment_slots(self, slots, pe=_PARALLEL_ENVIRONMENT):
+    def increase_parallel_environment_slots(self, slots):
         """
         Increases the number of parallel environment slots.
 
         :param slots: Number of slots to append.
-        :param pe: Parallel environment to update number of slots for.
         """
-        pe_slots = self.get_parallel_environment_slots(pe)
-        self.cmd_executor.execute(GridEngine._REPLACE_PARALLEL_ENVIRONMENT_SLOTS % (pe_slots + slots, pe))
+        for pe in self.get_parallel_environments():
+            pe_slots = self.get_parallel_environment_slots(pe)
+            self.cmd_executor.execute(GridEngine._REPLACE_PARALLEL_ENVIRONMENT_SLOTS % (pe_slots + slots, pe))
 
-    def decrease_parallel_environment_slots(self, slots, pe=_PARALLEL_ENVIRONMENT):
+    def decrease_parallel_environment_slots(self, slots):
         """
         Decreases the number of parallel environment slots.
 
         :param slots: Number of slots to subtract.
-        :param pe: Parallel environment to update number of slots for.
         """
-        pe_slots = self.get_parallel_environment_slots(pe)
-        self.cmd_executor.execute(GridEngine._REPLACE_PARALLEL_ENVIRONMENT_SLOTS % (pe_slots - slots, pe))
+        for pe in self.get_parallel_environments():
+            pe_slots = self.get_parallel_environment_slots(pe)
+            self.cmd_executor.execute(GridEngine._REPLACE_PARALLEL_ENVIRONMENT_SLOTS % (pe_slots - slots, pe))
 
-    def get_parallel_environment_slots(self, pe=_PARALLEL_ENVIRONMENT):
+    def get_parallel_environments(self):
+        """
+        Returns number of the parallel environment slots.
+
+        """
+        return self.cmd_executor.execute_to_lines(GridEngine._SHOW_PARALLEL_ENVIRONMENTS)
+
+    def get_parallel_environment_slots(self, pe):
         """
         Returns number of the parallel environment slots.
 
@@ -990,12 +997,13 @@ class GridEngineWorkerValidator:
 
 class CloudPipelineInstanceHelper:
 
-    def __init__(self, cloud_provider, region_id, master_instance_type, instance_family, pipe):
+    def __init__(self, cloud_provider, region_id, master_instance_type, instance_family, max_core_per_instance, pipe):
         self.region_id = region_id
         self.pipe = pipe
         self.instance_family = instance_family
         self.master_instance_type = master_instance_type
         self.cloud_provider = cloud_provider
+        self.max_core_per_instance = max_core_per_instance
 
     def select_instance(self, resource, price_type, hybrid_autoscale):
         allowed = self._get_allowed_instances(price_type, hybrid_autoscale)
@@ -1012,7 +1020,8 @@ class CloudPipelineInstanceHelper:
         allowed = pipe.get_allowed_instance_types(self.region_id, is_spot)["cluster.allowed.instance.types"]
         if hybrid_autoscale:
             return sorted(
-                    [instance for instance in allowed if self._is_instance_from_family(instance["name"])],
+                    [instance for instance in allowed if self._is_instance_from_family(instance["name"])
+                     and instance['vcpu'] <= self.max_core_per_instance],
                     cmp=lambda i1, i2: i1['vcpu'] - i2['vcpu']
             )
         else:
@@ -1161,7 +1170,8 @@ if __name__ == '__main__':
         if 'CP_CAP_AUTOSCALE_WORKERS' in os.environ else 3
     log_verbose = os.environ['CP_CAP_AUTOSCALE_VERBOSE'].strip().lower() == "true" \
         if 'CP_CAP_AUTOSCALE_VERBOSE' in os.environ else False
-    hybrid_autoscale = os.getenv('CP_CAP_AUTOSCALE_HYBRID', False)
+    hybrid_autoscale = os.environ['CP_CAP_AUTOSCALE_HYBRID'].strip().lower() == "true" \
+        if 'CP_CAP_AUTOSCALE_HYBRID' in os.environ else False
     autoscale_max_core_per_instance = int(os.getenv('CP_CAP_AUTOSCALE_HYBRID_MAX_CORE_PER_NODE', sys.maxint))
     instance_family = os.getenv('CP_CAP_AUTOSCALE_HYBRID_FAMILY',
                                 CloudPipelineInstanceHelper.get_family_from_type(cloud_provider, instance_type))
@@ -1170,10 +1180,9 @@ if __name__ == '__main__':
 
     instance_helper = CloudPipelineInstanceHelper(cloud_provider=cloud_provider, region_id=region_id,
                                                   instance_family=instance_family, master_instance_type=instance_type,
-                                                pipe=pipe)
+                                                  pipe=pipe, max_core_per_instance=autoscale_max_core_per_instance)
 
-    max_instance_cores = min(autoscale_max_core_per_instance,
-                             instance_helper.get_max_allowed(price_type, hybrid_autoscale)['vcpu'])
+    max_instance_cores = instance_helper.get_max_allowed(price_type, hybrid_autoscale)['vcpu']
     max_cluster_cores = max_instance_cores * max_additional_hosts + instance_cores
 
     Logger.init(cmd=args.debug, log_file='/common/workdir/.autoscaler.log', task='GridEngineAutoscaling',
