@@ -22,6 +22,7 @@ import subprocess
 import time
 import multiprocessing
 import re
+import sys
 
 class ExecutionError(RuntimeError):
     pass
@@ -1161,6 +1162,7 @@ if __name__ == '__main__':
     log_verbose = os.environ['CP_CAP_AUTOSCALE_VERBOSE'].strip().lower() == "true" \
         if 'CP_CAP_AUTOSCALE_VERBOSE' in os.environ else False
     hybrid_autoscale = os.getenv('CP_CAP_AUTOSCALE_HYBRID', False)
+    autoscale_max_core_per_instance = int(os.getenv('CP_CAP_AUTOSCALE_HYBRID_MAX_CORE_PER_NODE', sys.maxint))
     instance_family = os.getenv('CP_CAP_AUTOSCALE_HYBRID_FAMILY',
                                 CloudPipelineInstanceHelper.get_family_from_type(cloud_provider, instance_type))
 
@@ -1170,7 +1172,8 @@ if __name__ == '__main__':
                                                   instance_family=instance_family, master_instance_type=instance_type,
                                                 pipe=pipe)
 
-    max_instance_cores = instance_helper.get_max_allowed(price_type, hybrid_autoscale)['vcpu']
+    max_instance_cores = min(autoscale_max_core_per_instance,
+                             instance_helper.get_max_allowed(price_type, hybrid_autoscale)['vcpu'])
     max_cluster_cores = max_instance_cores * max_additional_hosts + instance_cores
 
     Logger.init(cmd=args.debug, log_file='/common/workdir/.autoscaler.log', task='GridEngineAutoscaling',
