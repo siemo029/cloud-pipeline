@@ -1,4 +1,4 @@
-# Copyright 2017-2019 EPAM Systems, Inc. (https://www.epam.com/)
+# Copyright 2017-2020 EPAM Systems, Inc. (https://www.epam.com/)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,9 +15,7 @@
 import click
 import requests
 import prettytable
-from src.api.folder import Folder
-from src.api.pipeline import Pipeline
-from src.api.data_storage import DataStorage
+
 from src.api.user import User
 from src.config import ConfigNotFoundError
 
@@ -25,22 +23,15 @@ from src.config import ConfigNotFoundError
 class ACLOperations(object):
 
     @classmethod
+    def get_classes(cls):
+        return ['pipeline', 'folder', 'data_storage', 'configuration', 'docker_registry', 'tool', 'tool_group']
+
+    @classmethod
     def set_acl(cls, identifier, object_type, sid, group, allow, deny, inherit):
         """ Set object permissions
         """
 
         try:
-            if object_type == 'pipeline':
-                model = Pipeline.get(identifier, load_storage_rules=False, load_run_parameters=False,
-                                     load_versions=False)
-                identifier = model.identifier
-            elif object_type == 'folder':
-                model = Folder.load(identifier)
-                identifier = model.id
-            elif object_type == 'data_storage':
-                model = DataStorage.get(identifier)
-                identifier = model.identifier
-
             all_permissions = User.get_permissions(identifier, object_type)
             user_permissions = filter(lambda permission:
                                       permission.name.lower() == sid.lower() and permission.principal != group,
@@ -121,17 +112,6 @@ class ACLOperations(object):
         """
 
         try:
-            if object_type == 'pipeline':
-                model = Pipeline.get(identifier, load_storage_rules=False, load_run_parameters=False,
-                                     load_versions=False)
-                identifier = model.identifier
-            elif object_type == 'folder':
-                model = Folder.load(identifier)
-                identifier = model.id
-            elif object_type == 'data_storage':
-                model = DataStorage.get(identifier)
-                identifier = model.identifier
-
             permissions_list = User.get_permissions(identifier, object_type)
             if len(permissions_list) > 0:
                 permissions_table = prettytable.PrettyTable()
