@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 EPAM Systems, Inc. (https://www.epam.com/)
+ * Copyright 2017-2020 EPAM Systems, Inc. (https://www.epam.com/)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,8 @@ import com.epam.pipeline.controller.vo.PipelineUserVO;
 import com.epam.pipeline.dao.user.GroupStatusDao;
 import com.epam.pipeline.dao.user.RoleDao;
 import com.epam.pipeline.dao.user.UserDao;
+import com.epam.pipeline.entity.datastorage.AbstractDataStorage;
+import com.epam.pipeline.entity.pipeline.Folder;
 import com.epam.pipeline.entity.user.CustomControl;
 import com.epam.pipeline.entity.user.DefaultRoles;
 import com.epam.pipeline.entity.user.GroupStatus;
@@ -30,17 +32,21 @@ import com.epam.pipeline.entity.user.PipelineUser;
 import com.epam.pipeline.entity.user.PipelineUserWithStoragePath;
 import com.epam.pipeline.entity.user.Role;
 import com.epam.pipeline.entity.utils.ControlEntry;
+import com.epam.pipeline.exception.DefaultStorageCreationException;
 import com.epam.pipeline.manager.datastorage.DataStorageValidator;
+import com.epam.pipeline.manager.pipeline.FolderManager;
 import com.epam.pipeline.manager.preference.PreferenceManager;
 import com.epam.pipeline.manager.preference.SystemPreferences;
 import com.epam.pipeline.manager.security.AuthManager;
 import com.epam.pipeline.security.UserContext;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.math.NumberUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,7 +63,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class UserManager {
+
+    private static final String DEFAULT_STORAGE_TEMPLATE = "DefaultStorage";
 
     @Autowired
     private UserDao userDao;
@@ -83,10 +92,44 @@ public class UserManager {
     @Autowired
     private DataStorageValidator storageValidator;
 
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Autowired
+    private FolderManager folderManager;
+
+    @Value("${storage.user.home.auto:false}")
+    private boolean shouldCreateDefaultHome;
+
     public PipelineUser createUser(String name, List<Long> roles,
                                    List<String> groups, Map<String, String> attributes,
                                    Long defaultStorageId) {
+        final PipelineUser newUser = createUser(name, roles, groups, attributes);
+        if (defaultStorageId != null) {
+            newUser.setDefaultStorageId(defaultStorageId);
+            userDao.updateUser(newUser);
+        } else if (shouldCreateDefaultHome) {
+            final AbstractDataStorage defaultStorage = createUserDefaultFolder(newUser).getStorages().get(0);
+            newUser.setDefaultStorageId(defaultStorage.getId());
+            userDao.updateUser(newUser);
+        }
+        return newUser;
+    }
+
+    private Folder createUserDefaultFolder(final PipelineUser user) {
+        final Folder folder = new Folder();
+        final String userName = user.getUserName();
+        folder.setName(userName);
+        try {
+            return folderManager.createFromTemplate(folder, DEFAULT_STORAGE_TEMPLATE);
+        } catch (RuntimeException e) {
+            throw new DefaultStorageCreationException(
+                messageHelper.getMessage(MessageConstants.ERROR_DEFAULT_STORAGE_CREATION,
+                                         userName,
+                                         e.getMessage())
+            );
+        }
+    }
+
+    private PipelineUser createUser(String name, List<Long> roles,
+                                   List<String> groups, Map<String, String> attributes) {
         Assert.isTrue(StringUtils.isNotBlank(name),
                 messageHelper.getMessage(MessageConstants.ERROR_USER_NAME_REQUIRED));
         String userName = name.trim().toUpperCase();
@@ -97,11 +140,9 @@ public class UserManager {
         user.setRoles(roleDao.loadRolesList(userRoles));
         user.setGroups(groups);
         user.setAttributes(attributes);
-        user.setDefaultStorageId(defaultStorageId);
         storageValidator.validate(user);
         return userDao.createUser(user, userRoles);
     }
-
 
     /**
      * Creates user with parameters defined in Cloud Pipeline (username and roles).
@@ -110,7 +151,6 @@ public class UserManager {
      * @param userVO specifies user to create
      * @return created user
      */
-    @Transactional(propagation = Propagation.REQUIRED)
     public PipelineUser createUser(PipelineUserVO userVO) {
         return createUser(userVO.getUserName(), userVO.getRoleIds(), null, null, null);
     }

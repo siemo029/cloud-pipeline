@@ -280,6 +280,7 @@ public final class MessageConstants {
     public static final String ERROR_MUTABLE_ACL_RETURN = "error.mutable.acl.return";
     public static final String ERROR_NO_GROUP_WAS_FOUND = "error.no.group.was.found";
     public static final String ERROR_GROUP_STATUS_EXISTS = "group.status.exists";
+    public static final String ERROR_DEFAULT_STORAGE_CREATION = "user.storage.home.auto.fails";
 
     // Security
     public static final String ERROR_PERMISSION_PARAM_REQUIRED = "permission.param.is.required";
