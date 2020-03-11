@@ -24,6 +24,7 @@ import com.epam.pipeline.dao.user.GroupStatusDao;
 import com.epam.pipeline.dao.user.RoleDao;
 import com.epam.pipeline.dao.user.UserDao;
 import com.epam.pipeline.entity.pipeline.Folder;
+import com.epam.pipeline.entity.security.acl.AclClass;
 import com.epam.pipeline.entity.user.CustomControl;
 import com.epam.pipeline.entity.user.DefaultRoles;
 import com.epam.pipeline.entity.user.GroupStatus;
@@ -37,6 +38,7 @@ import com.epam.pipeline.manager.pipeline.FolderManager;
 import com.epam.pipeline.manager.preference.PreferenceManager;
 import com.epam.pipeline.manager.preference.SystemPreferences;
 import com.epam.pipeline.manager.security.AuthManager;
+import com.epam.pipeline.manager.security.GrantPermissionManager;
 import com.epam.pipeline.security.UserContext;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.ListUtils;
@@ -91,6 +93,9 @@ public class UserManager {
     @Autowired
     private FolderManager folderManager;
 
+    @Autowired
+    private GrantPermissionManager permissionManager;
+
     @Value("${storage.user.home.template}")
     private  String defaultUserStorageTemplateName;
 
@@ -119,7 +124,9 @@ public class UserManager {
         final String userName = user.getUserName();
         folder.setName(userName);
         try {
-            return folderManager.createFromTemplate(folder, defaultUserStorageTemplateName, false);
+            final Folder defaultFolder = folderManager.createFromTemplate(folder, defaultUserStorageTemplateName, false);
+            grantOwnerPermissionsToUser(userName, defaultFolder);
+            return defaultFolder;
         } catch (RuntimeException e) {
             throw new DefaultStorageCreationException(
                 messageHelper.getMessage(MessageConstants.ERROR_DEFAULT_STORAGE_CREATION,
@@ -127,6 +134,13 @@ public class UserManager {
                                          e.getMessage())
             );
         }
+    }
+
+    private void grantOwnerPermissionsToUser(final String userName, final Folder defaultFolder) {
+        final Long folderId = defaultFolder.getId();
+        permissionManager.changeOwner(folderId, AclClass.FOLDER, userName);
+        final Long storageId = defaultFolder.getStorages().get(0).getId();
+        permissionManager.changeOwner(storageId, AclClass.DATA_STORAGE, userName);
     }
 
     private PipelineUser createUser(String name, List<Long> roles,
