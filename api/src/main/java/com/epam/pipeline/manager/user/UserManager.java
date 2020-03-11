@@ -66,8 +66,6 @@ import java.util.stream.Collectors;
 @Slf4j
 public class UserManager {
 
-    private static final String DEFAULT_STORAGE_TEMPLATE = "DefaultStorage";
-
     @Autowired
     private UserDao userDao;
 
@@ -98,6 +96,9 @@ public class UserManager {
     @Value("${storage.user.home.auto:false}")
     private boolean shouldCreateDefaultHome;
 
+    @Value("${storage.user.home.template}")
+    private  String defaultUserStorageTemplateName;
+
     public PipelineUser createUser(String name, List<Long> roles,
                                    List<String> groups, Map<String, String> attributes,
                                    Long defaultStorageId) {
@@ -118,7 +119,7 @@ public class UserManager {
         final String userName = user.getUserName();
         folder.setName(userName);
         try {
-            return folderManager.createFromTemplate(folder, DEFAULT_STORAGE_TEMPLATE, false);
+            return folderManager.createFromTemplate(folder, defaultUserStorageTemplateName, false);
         } catch (RuntimeException e) {
             throw new DefaultStorageCreationException(
                 messageHelper.getMessage(MessageConstants.ERROR_DEFAULT_STORAGE_CREATION,
