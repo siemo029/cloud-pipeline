@@ -23,7 +23,6 @@ import com.epam.pipeline.controller.vo.PipelineUserVO;
 import com.epam.pipeline.dao.user.GroupStatusDao;
 import com.epam.pipeline.dao.user.RoleDao;
 import com.epam.pipeline.dao.user.UserDao;
-import com.epam.pipeline.entity.datastorage.AbstractDataStorage;
 import com.epam.pipeline.entity.pipeline.Folder;
 import com.epam.pipeline.entity.user.CustomControl;
 import com.epam.pipeline.entity.user.DefaultRoles;
@@ -58,6 +57,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -91,9 +91,6 @@ public class UserManager {
     @Autowired
     private FolderManager folderManager;
 
-    @Value("${storage.user.home.auto:false}")
-    private boolean shouldCreateDefaultHome;
-
     @Value("${storage.user.home.template}")
     private  String defaultUserStorageTemplateName;
 
@@ -101,19 +98,24 @@ public class UserManager {
                                    List<String> groups, Map<String, String> attributes,
                                    Long defaultStorageId) {
         final PipelineUser newUser = createUser(name, roles, groups, attributes);
-        if (defaultStorageId != null) {
-            newUser.setDefaultStorageId(defaultStorageId);
-            userDao.updateUser(newUser);
-        } else if (shouldCreateDefaultHome) {
-            final AbstractDataStorage defaultStorage = createUserDefaultFolder(newUser).getStorages().get(0);
-            newUser.setDefaultStorageId(defaultStorage.getId());
-            userDao.updateUser(newUser);
-        }
+        final boolean shouldCreateDefaultHome =
+            preferenceManager.getPreference(SystemPreferences.DEFAULT_USER_DATA_STORAGE_ENABLED);
+        final Long storageId = Optional.ofNullable(defaultStorageId)
+            .orElseGet(() -> shouldCreateDefaultHome
+                             ? createUserDefaultFolder(newUser).getStorages().get(0).getId()
+                             : null);
+        newUser.setDefaultStorageId(storageId);
+        userDao.updateUser(newUser);
         return newUser;
     }
 
     private Folder createUserDefaultFolder(final PipelineUser user) {
         final Folder folder = new Folder();
+        final Long parentId =
+            preferenceManager.getPreference(SystemPreferences.DEFAULT_USER_DATA_STORAGE_PARENT_FOLDER);
+        Assert.notNull(parentId,
+                       messageHelper.getMessage(MessageConstants.ERROR_DEFAULT_STORAGE_NULL_PARENT_FOLDER));
+        folder.setParentId(parentId);
         final String userName = user.getUserName();
         folder.setName(userName);
         try {
